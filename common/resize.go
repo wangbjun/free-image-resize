@@ -7,7 +7,6 @@ import (
 	_ "image/gif"
 	"image/jpeg"
 	_ "image/png"
-	"log"
 	"os"
 	"strings"
 )
@@ -17,44 +16,64 @@ type Resize struct {
 	width, height uint
 	quality       int
 	isOverwrite   bool
+	rotate        int
 }
 
 func New() *Resize {
-	return &Resize{outputDir: ".", quality: 75}
+	return &Resize{outputDir: ".", quality: 85}
 }
 
-// Resize 压缩图片，默认保存成jpg，压缩比例75%
+// Resize 压缩图片，默认保存成jpg，压缩比例85%
 // 如果长和宽都为0，则不改变长和宽
 // 如果长和宽有一个不为0，则维持默认长宽比的情况下自动缩放
 // 如果长和宽都不为0，则会固定长宽比，图片可能会变形
-func (r *Resize) Resize(imgFile string) error {
+func (r *Resize) Resize(imgFile string) (string, error) {
 	stat, err := os.Stat(imgFile)
 	if err != nil {
-		return err
+		return "", err
 	}
 	imgName := stat.Name()
 	if i := strings.LastIndex(imgName, "."); i != -1 {
 		imgName = imgName[:strings.LastIndex(imgName, ".")]
 	}
+	//创建目录
+	if _, err := os.Stat(r.outputDir); os.IsNotExist(err) {
+		err := os.MkdirAll(r.outputDir, 0755)
+		if err != nil {
+			return "", err
+		}
+	}
+	outputFile := r.outputDir + fmt.Sprintf("/%s_resized.jpg", imgName)
+	if r.isOverwrite {
+		outputFile = r.outputDir + fmt.Sprintf("/%s.jpg", imgName)
+	}
 	file, err := os.Open(imgFile)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer file.Close()
 	img, _, err := image.Decode(file)
 	if err != nil {
-		return err
+		return "", err
 	}
 	imgResize := resize.Resize(r.width, r.height, img, resize.Lanczos3)
-
-	output, err := os.Create(r.outputDir + fmt.Sprintf("/%s_resized.jpg", imgName))
+	//旋转图片
+	if r.rotate != 0 {
+		switch r.rotate {
+		case 90:
+			imgResize = rotate90(imgResize)
+		case 180:
+			imgResize = rotate180(imgResize)
+		case 270:
+			imgResize = rotate270(imgResize)
+		}
+	}
+	output, err := os.Create(outputFile)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
 	defer output.Close()
-
-	// write new image to file
-	return jpeg.Encode(output, imgResize, &jpeg.Options{Quality: r.quality})
+	return outputFile, jpeg.Encode(output, imgResize, &jpeg.Options{Quality: r.quality})
 }
 
 // SetOutputDir 设置结果输出目录
@@ -80,4 +99,9 @@ func (r *Resize) SetWidth(w uint) {
 // SetHeight 设置宽
 func (r *Resize) SetHeight(h uint) {
 	r.height = h
+}
+
+// SetRotate 设置旋转角度
+func (r *Resize) SetRotate(rotate int) {
+	r.rotate = rotate
 }

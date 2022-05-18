@@ -12,7 +12,7 @@ func TestResize_Resize(t *testing.T) {
 		resize := New()
 		assert.NotNil(t, resize)
 
-		err := resize.Resize("test.jpg")
+		_, err := resize.Resize("test.jpg")
 		assert.Nil(t, err)
 	})
 }

@@ -6,6 +6,7 @@ import (
 	"freeImageResize/theme"
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/dialog"
@@ -28,24 +29,20 @@ type App struct {
 
 	imageList   *widget.Table
 	chooseInput *widget.Button
+	inputDir    string
 
 	chooseOutput *widget.Button
 	outputDir    *widget.Entry
 	outputOpt    *widget.Check
 
+	inputRotate *widget.SelectEntry
+
 	submitButton *widget.Button
 	clearButton  *widget.Button
 
-	imageData []*imageStatus
-	resize    *common.Resize
-}
-
-type imageStatus struct {
-	Name    string
-	Path    string
-	Size    string
-	ModTime string
-	Status  string
+	imageData    []common.ImageItem
+	resize       *common.Resize
+	jobProcessor *common.JobProcessor
 }
 
 var imgExtMap = map[string]int{"png": 1, "jpg": 1, "jpeg": 1, "gif": 1}
@@ -53,10 +50,12 @@ var imgExtMap = map[string]int{"png": 1, "jpg": 1, "jpeg": 1, "gif": 1}
 func NewApp() *App {
 	resize := app.NewWithID("fyneResize")
 	resize.Settings().SetTheme(&theme.MyTheme{})
+	n := common.New()
 	application := &App{
-		fyne:   resize,
-		window: resize.NewWindow("Free永久免费图片压缩工具---支持jpg、png、gif格式"),
-		resize: common.New(),
+		fyne:         resize,
+		window:       resize.NewWindow("Free永久免费图片压缩工具---支持jpg、png、gif格式"),
+		resize:       n,
+		jobProcessor: common.NewJobProcessor(n),
 	}
 	return application
 }
@@ -83,10 +82,10 @@ func (app *App) setUp() {
 		app.resize.SetHeight(uint(i))
 	}
 
-	f := 75.0
+	f := 85.0
 	data := binding.BindFloat(&f)
 	app.inputLabel = widget.NewLabelWithData(binding.FloatToStringWithFormat(data, "压缩率（图片大小）: %.0f%%"))
-	app.inputQuality = widget.NewSliderWithData(0, 100, data)
+	app.inputQuality = widget.NewSliderWithData(1, 100, data)
 	app.inputQuality.OnChanged = func(f float64) {
 		app.resize.SetQuality(int(f))
 		data.Set(f)
@@ -99,21 +98,31 @@ func (app *App) setUp() {
 	outputDir := ""
 	outputData := binding.BindString(&outputDir)
 	app.outputDir = widget.NewEntryWithData(outputData)
+	app.outputDir.OnChanged = func(s string) {
+		app.resize.SetOutputDir(s)
+	}
 	app.outputDir.PlaceHolder = "默认为图片输入文件夹"
 	app.chooseOutput = widget.NewButton("选择输出文件夹", app.chooseOutputSubmit)
 	app.outputOpt = widget.NewCheck("覆盖原文件", app.outputOptSubmit)
 
 	app.submitButton = widget.NewButton("开始处理", app.submit)
 	app.clearButton = widget.NewButton("清除列表", func() {
-		app.imageData = []*imageStatus{}
+		app.imageData = []common.ImageItem{}
 		app.imageList.Hide()
 	})
+
+	app.inputRotate = widget.NewSelectEntry([]string{"0", "90", "180", "270"})
+	app.inputRotate.SetText("0")
+	app.inputRotate.OnChanged = func(s string) {
+		i, _ := strconv.Atoi(s)
+		app.resize.SetRotate(i)
+	}
 
 	app.window.SetContent(
 		container.NewBorder(
 			container.NewVBox(
 				container.NewAdaptiveGrid(2, container.NewAdaptiveGrid(3, app.chooseInput, app.chooseOutput, app.outputOpt), app.outputDir),
-				container.NewAdaptiveGrid(3, widget.NewLabel("压缩长宽配置："), app.inputWidth, app.inputHeight),
+				container.NewAdaptiveGrid(4, widget.NewLabel("压缩长宽配置："), app.inputWidth, app.inputHeight, container.NewAdaptiveGrid(2, widget.NewLabel("旋转角度："), app.inputRotate)),
 				container.NewAdaptiveGrid(2, app.inputLabel, app.inputQuality),
 				container.NewAdaptiveGrid(4, layout.NewSpacer(), app.submitButton, app.clearButton, layout.NewSpacer()),
 				widget.NewSeparator(),
@@ -132,13 +141,15 @@ func (app *App) chooseInputSubmit() {
 			log.Println("Cancelled")
 			return
 		}
+		app.inputDir = dir.Path()
+		app.outputDir.SetText(dir.Path())
 		app.resize.SetOutputDir(dir.Path())
 		readDir, err := os.ReadDir(dir.Path())
 		if err != nil {
 			app.alert(err.Error())
 			return
 		}
-		app.imageData = []*imageStatus{}
+		app.imageData = []common.ImageItem{}
 		for _, d := range readDir {
 			if d.IsDir() {
 				continue
@@ -155,7 +166,7 @@ func (app *App) chooseInputSubmit() {
 			if err != nil {
 				continue
 			}
-			app.imageData = append(app.imageData, &imageStatus{
+			app.imageData = append(app.imageData, common.ImageItem{
 				Name:    d.Name(),
 				Path:    dir.Path() + "/" + d.Name(),
 				Size:    humanize.Bytes(uint64(info.Size())),
@@ -197,7 +208,8 @@ func (app *App) outputOptSubmit(b bool) {
 	if b == true {
 		app.chooseOutput.Disable()
 		app.outputDir.Disable()
-		app.outputDir.SetText("")
+		app.outputDir.SetText(app.inputDir)
+		app.resize.SetOutputDir(app.inputDir)
 	} else {
 		app.chooseOutput.Enable()
 		app.outputDir.Enable()
@@ -236,13 +248,26 @@ func (app *App) setupImageList() {
 			app.imageList.Refresh()
 			app.imageList.UnselectAll()
 		}
+		if id.Col == 1 {
+			item := app.imageData[id.Row]
+			img := canvas.NewImageFromFile(item.Path)
+			w := fyne.CurrentApp().NewWindow("查看图片")
+			img.FillMode = canvas.ImageFillContain
+			w.SetContent(img)
+			w.Resize(fyne.Size{
+				Width:  600,
+				Height: 400,
+			})
+			w.CenterOnScreen()
+			w.Show()
+		}
 	}
 	app.imageList.SetColumnWidth(0, 40)
 	app.imageList.SetColumnWidth(1, 360)
-	app.imageList.SetColumnWidth(2, 90)
-	app.imageList.SetColumnWidth(3, 180)
-	app.imageList.SetColumnWidth(4, 90)
-	app.imageList.SetColumnWidth(5, 80)
+	app.imageList.SetColumnWidth(2, 80)
+	app.imageList.SetColumnWidth(3, 170)
+	app.imageList.SetColumnWidth(4, 120)
+	app.imageList.SetColumnWidth(5, 70)
 }
 
 func (app *App) submit() {
@@ -250,6 +275,38 @@ func (app *App) submit() {
 		app.alert("请先选择图片")
 		return
 	}
+	app.imageList.UnselectAll()
+	app.imageList.ScrollToTop()
+	if app.imageData[0].Status != "待处理" {
+		for i := range app.imageData {
+			app.imageData[i].Status = "待处理"
+		}
+		app.imageList.Refresh()
+	}
+	app.submitButton.SetText("正在处理中...")
+	app.submitButton.Disable()
+	app.clearButton.Disable()
+
+	go app.jobProcessor.AddJob(app.imageData...)
+	log.Printf("Add %d Job Success, quality: %f", len(app.imageData), app.inputQuality.Value)
+	count := 0
+	for {
+		result := <-app.jobProcessor.Output()
+		for i, image := range app.imageData {
+			if image.Name == result.Name {
+				app.imageData[i].Status = result.Status
+			}
+		}
+		app.imageList.Refresh()
+		count++
+		if count == len(app.imageData) {
+			break
+		}
+	}
+	app.submitButton.SetText("开始处理")
+	app.submitButton.Enable()
+	app.clearButton.Enable()
+	log.Println("All Job finished")
 }
 
 func (app *App) alert(msg string) {

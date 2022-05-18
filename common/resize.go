@@ -56,18 +56,18 @@ func (r *Resize) Resize(imgFile string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	imgResize := resize.Resize(r.width, r.height, img, resize.Lanczos3)
 	//旋转图片
 	if r.rotate != 0 {
 		switch r.rotate {
 		case 90:
-			imgResize = rotate90(imgResize)
+			img = rotate90(img)
 		case 180:
-			imgResize = rotate180(imgResize)
+			img = rotate180(img)
 		case 270:
-			imgResize = rotate270(imgResize)
+			img = rotate270(img)
 		}
 	}
+	imgResize := resize.Resize(r.width, r.height, img, resize.Lanczos3)
 	output, err := os.Create(outputFile)
 	if err != nil {
 		return "", err

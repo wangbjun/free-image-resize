@@ -116,7 +116,10 @@ func (app *App) setUp() {
 	app.inputRotate = widget.NewSelectEntry([]string{"0", "90", "180", "270"})
 	app.inputRotate.SetText("0")
 	app.inputRotate.OnChanged = func(s string) {
-		i, _ := strconv.Atoi(s)
+		i, err := strconv.Atoi(s)
+		if err != nil {
+			return
+		}
 		app.resize.SetRotate(i)
 	}
 
@@ -204,7 +207,6 @@ func (app *App) chooseInputSubmit() {
 
 		if len(app.imageData) == 0 {
 			app.imageList.Hide()
-			app.alert("找不到符合要求的图片")
 			return
 		}
 		app.imageList.Length = func() (int, int) {
@@ -264,6 +266,8 @@ func (app *App) setupImageList() {
 				label.SetText(app.imageData[id.Row].Status)
 			case 5:
 				label.SetText("移除")
+			default:
+				label.SetText("未知")
 			}
 		})
 	app.imageList.OnSelected = func(id widget.TableCellID) {

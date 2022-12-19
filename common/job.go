@@ -10,7 +10,8 @@ import (
 type ImageItem struct {
 	Name    string
 	Path    string
-	Size    string
+	Size    int64
+	SizeStr string
 	ModTime string
 	Status  string
 }

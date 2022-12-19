@@ -15,6 +15,7 @@ import (
 	"github.com/dustin/go-humanize"
 	"log"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -29,6 +30,7 @@ type App struct {
 
 	imageList   *widget.Table
 	chooseInput *widget.Button
+	inputOpt    *widget.SelectEntry
 	inputDir    string
 
 	chooseOutput *widget.Button
@@ -69,22 +71,22 @@ func (app *App) Run() {
 
 func (app *App) setUp() {
 	app.inputWidth = widget.NewEntry()
-	app.inputWidth.PlaceHolder = "长度，默认保持不变"
+	app.inputWidth.PlaceHolder = "长度"
 	app.inputWidth.OnChanged = func(s string) {
 		i, _ := strconv.Atoi(s)
 		app.resize.SetWidth(uint(i))
 	}
 
 	app.inputHeight = widget.NewEntry()
-	app.inputHeight.PlaceHolder = "宽度，默认保持不变"
+	app.inputHeight.PlaceHolder = "宽度"
 	app.inputHeight.OnChanged = func(s string) {
 		i, _ := strconv.Atoi(s)
 		app.resize.SetHeight(uint(i))
 	}
 
-	f := 85.0
+	f := 90.0
 	data := binding.BindFloat(&f)
-	app.inputLabel = widget.NewLabelWithData(binding.FloatToStringWithFormat(data, "压缩率（图片大小）: %.0f%%"))
+	app.inputLabel = widget.NewLabelWithData(binding.FloatToStringWithFormat(data, "压缩率： %.0f%%"))
 	app.inputQuality = widget.NewSliderWithData(1, 100, data)
 	app.inputQuality.OnChanged = func(f float64) {
 		app.resize.SetQuality(int(f))
@@ -93,7 +95,7 @@ func (app *App) setUp() {
 
 	app.setupImageList()
 
-	app.chooseInput = widget.NewButton("选择图片文件夹", app.chooseInputSubmit)
+	app.chooseInput = widget.NewButton("选择文件夹", app.chooseInputSubmit)
 
 	outputDir := ""
 	outputData := binding.BindString(&outputDir)
@@ -102,8 +104,8 @@ func (app *App) setUp() {
 		app.resize.SetOutputDir(s)
 	}
 	app.outputDir.PlaceHolder = "默认为图片输入文件夹"
-	app.chooseOutput = widget.NewButton("选择输出文件夹", app.chooseOutputSubmit)
-	app.outputOpt = widget.NewCheck("覆盖原文件", app.outputOptSubmit)
+	app.chooseOutput = widget.NewButton("选择输出", app.chooseOutputSubmit)
+	app.outputOpt = widget.NewCheck("是否覆盖", app.outputOptSubmit)
 
 	app.submitButton = widget.NewButton("开始处理", app.submit)
 	app.clearButton = widget.NewButton("清除列表", func() {
@@ -118,12 +120,28 @@ func (app *App) setUp() {
 		app.resize.SetRotate(i)
 	}
 
+	app.inputOpt = widget.NewSelectEntry([]string{"1MB", "3MB", "5MB", "10MB"})
+	app.inputOpt.SetText("1MB")
+	app.inputOpt.OnChanged = func(s string) {
+		gt, _ := strconv.Atoi(strings.ReplaceAll(s, "MB", ""))
+		var tmp []common.ImageItem
+		for _, img := range app.imageData {
+			if img.Size >= int64(gt*1024*1024) {
+				tmp = append(tmp, img)
+			}
+		}
+		app.imageData = tmp
+		app.imageList.Length = func() (int, int) {
+			return len(app.imageData), 6
+		}
+		app.imageList.Refresh()
+	}
+
 	app.window.SetContent(
 		container.NewBorder(
 			container.NewVBox(
-				container.NewAdaptiveGrid(2, container.NewAdaptiveGrid(3, app.chooseInput, app.chooseOutput, app.outputOpt), app.outputDir),
-				container.NewAdaptiveGrid(4, widget.NewLabel("压缩长宽配置："), app.inputWidth, app.inputHeight, container.NewAdaptiveGrid(2, widget.NewLabel("旋转角度："), app.inputRotate)),
-				container.NewAdaptiveGrid(2, app.inputLabel, app.inputQuality),
+				container.NewAdaptiveGrid(3, container.NewAdaptiveGrid(3, app.chooseInput, widget.NewLabel("筛选大于："), app.inputOpt), container.NewAdaptiveGrid(2, app.chooseOutput, app.outputOpt), app.outputDir),
+				container.NewAdaptiveGrid(7, widget.NewLabel("压缩配置："), app.inputWidth, app.inputHeight, app.inputLabel, app.inputQuality, widget.NewLabel("旋转角度："), app.inputRotate),
 				container.NewAdaptiveGrid(4, layout.NewSpacer(), app.submitButton, app.clearButton, layout.NewSpacer()),
 				widget.NewSeparator(),
 			),
@@ -166,12 +184,21 @@ func (app *App) chooseInputSubmit() {
 			if err != nil {
 				continue
 			}
+			gt, _ := strconv.Atoi(strings.ReplaceAll(app.inputOpt.Text, "MB", ""))
+			if info.Size() < int64(gt*1024*1024) {
+				continue
+			}
 			app.imageData = append(app.imageData, common.ImageItem{
 				Name:    d.Name(),
 				Path:    dir.Path() + "/" + d.Name(),
-				Size:    humanize.Bytes(uint64(info.Size())),
+				Size:    info.Size(),
+				SizeStr: humanize.Bytes(uint64(info.Size())),
 				ModTime: info.ModTime().Format("2006-01-02 15:04:05"),
 				Status:  "待处理",
+			})
+
+			sort.Slice(app.imageData, func(i, j int) bool {
+				return app.imageData[i].Size > app.imageData[j].Size
 			})
 		}
 
@@ -230,7 +257,7 @@ func (app *App) setupImageList() {
 			case 1:
 				label.SetText(app.imageData[id.Row].Name)
 			case 2:
-				label.SetText(app.imageData[id.Row].Size)
+				label.SetText(app.imageData[id.Row].SizeStr)
 			case 3:
 				label.SetText(app.imageData[id.Row].ModTime)
 			case 4:
@@ -262,12 +289,12 @@ func (app *App) setupImageList() {
 			w.Show()
 		}
 	}
-	app.imageList.SetColumnWidth(0, 40)
-	app.imageList.SetColumnWidth(1, 360)
-	app.imageList.SetColumnWidth(2, 80)
-	app.imageList.SetColumnWidth(3, 170)
+	app.imageList.SetColumnWidth(0, 50)
+	app.imageList.SetColumnWidth(1, 370)
+	app.imageList.SetColumnWidth(2, 100)
+	app.imageList.SetColumnWidth(3, 190)
 	app.imageList.SetColumnWidth(4, 120)
-	app.imageList.SetColumnWidth(5, 70)
+	app.imageList.SetColumnWidth(5, 90)
 }
 
 func (app *App) submit() {
